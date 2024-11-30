@@ -4,15 +4,16 @@ import { logger } from './logger.js';
 
 export async function fishing(token, type = '1', proxy) {
     const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
-    if (type === '1') {
-        type = 'short_range'
-    } else if (type === '2') { 
-        type = 'mid_range'
-    } else {
-        type = 'long_range'
-    }
-    const url = `wss://fishing-frenzy-api-0c12a800fbfe.herokuapp.com/?token=${token}`;
 
+    if (type === '1') {
+        type = 'short_range';
+    } else if (type === '2') {
+        type = 'mid_range';
+    } else {
+        type = 'long_range';
+    }
+
+    const url = `wss://fishing-frenzy-api-0c12a800fbfe.herokuapp.com/?token=${token}`;
     const ws = new WebSocket(url, { agent });
 
     let isGameInitialized = false;
@@ -20,18 +21,17 @@ export async function fishing(token, type = '1', proxy) {
     let frameCount = 0;
     let startTime = Date.now();
     const maxFrames = 15;
-    const fps = 20;
 
     const startNewGame = () => {
         if (!isGameInitialized) {
             const message = JSON.stringify({ cmd: "prepare", range: type });
             ws.send(message);
-            logger('Prepare For Fishing...');
+            logger('Prepare For Fishing...', 'info');
         } else {
             const start = JSON.stringify({ cmd: "start" });
             setTimeout(() => {
                 ws.send(start);
-                logger('Fishing Starting...');
+                logger('Fishing Starting...', 'info');
             }, 1000);
         }
     };
@@ -52,6 +52,7 @@ export async function fishing(token, type = '1', proxy) {
             en: 1,
         };
         ws.send(JSON.stringify(endResponse));
+        logger('Game ended, results sent.', 'info');
     };
 
     const handleGameState = (message) => {
@@ -75,38 +76,51 @@ export async function fishing(token, type = '1', proxy) {
         return 426 + frame * 2 - dir * 3;
     };
 
-    let fish;
-    ws.on('open', function open() {
-        logger(`Connected to WebSocket server using proxy: ${proxy}`);
+    ws.on('open', () => {
+        logger(`Connected to WebSocket server`, 'info');
         startNewGame();
     });
 
-    ws.on('message', function incoming(data) {
+    ws.on('message', (data) => {
         const message = data.toString();
         try {
             const parsedData = JSON.parse(message);
 
             if (parsedData.type === 'initGame') {
-                fish = parsedData.data.randomFish.fishName;
-                logger("Trying to Catch Fish: ",'info', fish);
+                const fish = parsedData.data.randomFish.fishName;
+                logger(`Trying to Catch Fish: ${fish}`, 'info');
 
                 isGameInitialized = true;
                 startNewGame();
             }
+
             if (parsedData.type === 'gameState') {
                 handleGameState(parsedData);
             }
 
             if (parsedData.type === 'gameOver') {
-                const energy = parsedData.catchedFish.energy;
+                const energy = parsedData.catchedFish?.energy || 0;
                 if (parsedData.success) {
-                    logger(`Game succeeded! Fish Catched: ${fish} Energy Left: ${energy}`, 'success');
+                    logger(`Game succeeded! Fish Caught: ${parsedData.catchedFish.fishName} | Energy Left: ${energy}`, 'success');
                 } else {
-                    logger('Game failed:', 'error', parsedData);
+                    logger('Game failed', 'error');
                 }
             }
         } catch (error) {
-            logger('Failed to parse message:', 'error');
+            logger(`Failed to parse WebSocket message: ${error.message}`, 'error');
+        }
+    });
+
+    ws.on('error', (err) => {
+        logger(`WebSocket error: ${err.message}`, 'error');
+        ws.close();
+    });
+
+    ws.on('close', (code, reason) => {
+        logger(`WebSocket closed: Code ${code} | Reason: ${reason}`, 'warn');
+        if (code !== 1000) {
+            logger('Retrying connection in 5 seconds...', 'warn');
+            setTimeout(() => fishing(token, type, proxy), 5000);
         }
     });
 }
